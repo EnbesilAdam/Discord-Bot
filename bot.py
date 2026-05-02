@@ -9,8 +9,6 @@ import aiohttp
 import json
 from datetime import datetime, timedelta
 import urllib.parse
-
-# --- CONFIGURATION ---
 TOKEN = ''
 GUILD_ID = 1487911608926867590 
 TICKET_CATEGORY_ID = 1487915424573296671
@@ -25,9 +23,7 @@ WEB_URL = "https://winterhyacinth.gt.tc/devlog-detail.html"
 
 LAST_DATA = {"post_id": None, "commit_sha": None}
 STATUS_LIST = itertools.cycle(["🎮 Developing Games", "⚙️ Optimizing Plugins", "💻 Windows Tools", "❄️ Winter Hyacinth"])
-START_TIME = datetime.now() # Uptime hesaplamak için başlangıç zamanı
-
-# --- STYLIZED UI COMPONENTS ---
+START_TIME = datetime.now()
 
 class CareerLinkView(ui.View):
     def __init__(self):
@@ -124,8 +120,6 @@ async def create_ticket(interaction: discord.Interaction):
     await channel.send(content=f"{staff.mention if staff else ''} {interaction.user.mention}", embed=welcome_embed, view=TicketControlView())
     await interaction.followup.send(f"✅ Ticket created: {channel.mention}", ephemeral=True)
 
-# --- CORE BOT ---
-
 class WinterBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.all(), help_command=None)
@@ -196,8 +190,6 @@ class WinterBot(commands.Bot):
 
 bot = WinterBot()
 
-# --- PREFIX COMMANDS (!) ---
-
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
 async def setup(ctx):
@@ -211,7 +203,6 @@ async def setup(ctx):
 @bot.command(name="info")
 async def info(ctx):
     """Gelişmiş Bilgilendirme Komutu"""
-    # Uptime hesaplama
     uptime = datetime.now() - START_TIME
     hours, remainder = divmod(int(uptime.total_seconds()), 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -219,17 +210,14 @@ async def info(ctx):
     embed = discord.Embed(title="❄️ Winter Hyacinth - System Intelligence", color=0x3498db, timestamp=datetime.now())
     embed.set_thumbnail(url=bot.user.display_avatar.url)
     
-    # Sunucu Verileri (Sayılarla)
     embed.add_field(name="👥 Members", value=f"`{ctx.guild.member_count}`", inline=True)
     embed.add_field(name="🎭 Roles", value=f"`{len(ctx.guild.roles)}`", inline=True)
     embed.add_field(name="💬 Channels", value=f"`{len(ctx.guild.channels)}`", inline=True)
     
-    # Teknik Veriler
     embed.add_field(name="📡 Latency", value=f"`{round(bot.latency * 1000)}ms`", inline=True)
     embed.add_field(name="⏱️ Uptime", value=f"`{hours}h {minutes}m {seconds}s`", inline=True)
     embed.add_field(name="🛰️ Status", value="🟢 Operational", inline=True)
     
-    # Proje Verileri
     embed.add_field(name="🚀 Last Commit", value=f"`{LAST_DATA['commit_sha'][:7] if LAST_DATA['commit_sha'] else 'Checking...'}`", inline=True)
     embed.add_field(name="📝 Devlog ID", value=f"`{LAST_DATA['post_id'] if LAST_DATA['post_id'] else 'Syncing...'}`", inline=True)
     embed.add_field(name="💻 Developer", value="`enbest`", inline=True)
