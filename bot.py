@@ -50,7 +50,7 @@ STATUS_OPTIONS = [
 STATUS_LIST = itertools.cycle(STATUS_OPTIONS)
 START_TIME = datetime.now()
 
-# --- STYLIZED UI COMPONENTS (ALL ENGLISH) ---
+# --- STYLIZED UI COMPONENTS ---
 
 class CareerLinkView(ui.View):
     def __init__(self):
