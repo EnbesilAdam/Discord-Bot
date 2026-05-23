@@ -1,53 +1,57 @@
 # ❄️ Winter Hyacinth Bot
 
-An advanced, automated server intelligence system built with **Discord.py** to manage communities, monitor production GitHub repositories, sync technical devlogs, and handle professional support lines.
+<p align="center">
+  <img src="https://i.imgur.com/jlevP0F.jpeg" alt="Winter Hyacinth Banner" width="600"/>
+</p>
+
+Winter Hyacinth is a sleek, automated server assistant designed to bridge the gap between your development workflow and your Discord community.
 
 ---
 
-## 🚀 Core Features
+## 🚀 Key Features
 
-* **Advanced GitHub Tracking:** Real-time monitoring for production repositories. Fetches deep commit insights including line counts (`Additions` / `Deletions`) and granular structural file changes (`Added`, `Modified`, `Removed`).
-* **Automated Devlog Synchronization:** Continuously polls custom JSON payloads to broadcast structural developer logs directly to your community with custom rich embeds.
-* **Persistent Support Center:** Integrated persistent UI components (`discord.ui.Select`, `discord.ui.Button`) supporting multi-stage workflow structures like dedicated dynamic ticket generation and career routing.
-* **Secure Token Handling:** Decoupled architecture using environmental structures (`python-dotenv`) ensuring raw tokens are never exposed in version control logs.
-* **Live Analytics Hub:** Dynamic presence handling alongside live guild performance analytics (`!info`).
+* **📦 Smart GitHub Tracker:** Posts instant updates when you push code. Tracks changes down to the exact line counts (Additions / Deletions) and displays file statuses.
+* **✍️ Automated Devlog Sync:** Automatically polls your custom JSON feed and formats beautiful community announcements whenever you publish a new article.
+* **🎫 Dynamic Support Tickets:** Users can open secure, private ticket channels with a single click. Includes automated chat logs and archiving for your staff.
+* **💼 Seamless Career Intake:** Features a one-click button that automatically drafts and formats a job application email for candidates using Gmail.
+* **📊 Live Dashboard (!info):** Monitors server statistics, dynamic custom statuses, system uptime, and API latency in real-time.
 
 ---
 
-## 🛠️ Infrastructure & Setup
+## ⚙️ Quick Installation
 
-### 1. Prerequisites
-Ensure you have Python 3.8+ installed on your host system or VPS environment.
+Deploying the bot to your local machine or a VPS takes only three simple steps:
 
-### 2. Environmental Variables
-This project strictly decouples operational credentials from codebase logic. Create a `.env` file in the root directory and populate it with your confidential Discord credentials:
-
-```env
-DISCORD_BOT_TOKEN=your_secure_discord_bot_token_here
-
-3. Dependency Installation
-Install the necessary system packages and asynchronous networking libraries using pip:
-
+### 1. Install Libraries
+Run this command in your terminal to install the necessary asynchronous modules:
 pip install discord.py python-dotenv aiohttp
 
-4. Running the Bot
+### 2. Set Up Credentials
+Create a .env file in the bot's root directory and drop your secure bot token inside:
+DISCORD_BOT_TOKEN=your_secret_bot_token_here
 
-Initiate the primary loop execution thread directly from your terminal workspace:
-
+### 3. Launch System
+Fire up the bot's core engine using Python:
 python3 bot.py
-📑 Production Commands
 
-!setup — (Administrator Only) Instantiates the master Winter Hyacinth Hub control center, rendering persistent dropdowns for direct user interaction.
+---
 
-!info — Displays global system health statistics, operational uptime matrix, active websocket latency logs, and current codebase synchronization status.
+## 📑 Command Reference
 
-💻 Tech Stack
-Language: Python
+| Command | Permission | Description |
+| :--- | :--- | :--- |
+| !setup | Administrator | Spawns the central Hub embed with the Support and Career dropdown menus. |
+| !info | Everyone | Displays system health, live uptime matrix, websocket latency, and sync states. |
 
-Primary Framework: Discord.py (v2.0+)
+---
 
-Networking Layer: Aiohttp (Asynchronous HTTP Client/Server)
+## 💻 Tech Stack
 
-Architecture: Event-driven async loop structures
+* **Core Engine:** Python & Discord.py (v2.0+)
+* **Data Fetching:** Aiohttp (Asynchronous HTTP Client)
+* **Configuration:** Dotenv Architecture
 
-Developed and maintained by enbest for the Winter Hyacinth Automated System network.
+---
+<p align="center">
+  <i>Developed and maintained by <b>enbest</b> for the Winter Hyacinth Automated System network.</i>
+</p>
