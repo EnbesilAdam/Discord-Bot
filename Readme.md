@@ -1,4 +1,4 @@
-# ❄️ Winter Hyacinth Bot
+# ❄️ Winter Hyacinth Bott
 
 <p align="center">
   <img src="https://i.imgur.com/jlevP0F.jpeg" alt="Winter Hyacinth Banner" width="600"/>
