@@ -12,9 +12,9 @@ import urllib.parse
 import os
 from dotenv import load_dotenv
 
-# --- SYSTEM CONFIG ---
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 GUILD_ID = 1487911608926867590
 TICKET_CATEGORY_ID = 1487915424573296671
@@ -29,17 +29,24 @@ GITHUB_REPOS = [
     "EnbesilAdam/MySchoolMemories"
 ]
 
-JSON_URL = (
-    "https://gist.githubusercontent.com/"
-    "EnbesilAdam/efa76e1d7df2ba5be195bd4"
-    "17d339b5/raw/posts.json"
-)
+JSON_URL = "https://api.github.com/gists/efa76e1d7df2ba5be195bd4717d339b5"
 WEB_URL = "https://winterhyacinth.gt.tc/devlog-detail.html"
 
 LAST_DATA = {
     "post_id": None,
     "commits": {}
 }
+
+AI_SESSIONS = {}
+
+GEMINI_SYSTEM_PROMPT = (
+    "You are Hyacinth AI, the official smart assistant of Winter Hyacinth — "
+    "a game development and software studio. You are helpful, technically strong, "
+    "and friendly. You assist users with coding questions, debugging, game dev, "
+    "web technologies, and general software problems. "
+    "When writing code, always use proper markdown code blocks with language tags. "
+    "Keep responses concise but thorough. If you don't know something, say so honestly."
+)
 
 STATUS_OPTIONS = [
     "🎮 Developing Games",
@@ -50,7 +57,206 @@ STATUS_OPTIONS = [
 STATUS_LIST = itertools.cycle(STATUS_OPTIONS)
 START_TIME = datetime.now()
 
-# --- STYLIZED UI COMPONENTS ---
+GEMINI_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-1.5-flash",
+]
+
+_gemini_lock = asyncio.Semaphore(1)
+
+async def call_gemini(history: list, user_message: str) -> str:
+    """
+    Gemini API'ye istek atar.
+    429 (rate limit) alınırsa:
+      - Önce aynı modelde 3 kez exponential backoff ile yeniden dener (2s, 4s, 8s).
+      - Hâlâ 429 ise bir sonraki modele geçer.
+      - Tüm modeller tükenirse kullanıcıya bilgi verir.
+    """
+    if not GEMINI_API_KEY:
+        return "❌ `GEMINI_API_KEY` bulunamadı. Lütfen `.env` dosyasını kontrol edin."
+
+    contents = list(history)  # kopyala, orijinali bozma
+    contents.append({"role": "user", "parts": [{"text": user_message}]})
+
+    if not history:
+        contents[0]["parts"][0]["text"] = (
+            f"[System Instructions: {GEMINI_SYSTEM_PROMPT}]\n\n"
+            + contents[0]["parts"][0]["text"]
+        )
+
+    payload = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 2048,
+        }
+    }
+
+    async with _gemini_lock:  # Eş zamanlı istekleri sıraya koy
+        for model in GEMINI_MODELS:
+            url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model}:generateContent?key={GEMINI_API_KEY}"
+            )
+            for attempt in range(3):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            url,
+                            json=payload,
+                            headers={"Content-Type": "application/json"},
+                            timeout=aiohttp.ClientTimeout(total=40)
+                        ) as resp:
+
+                            if resp.status == 200:
+                                data = await resp.json()
+                                candidates = data.get("candidates", [])
+                                if not candidates:
+                                    return "❌ Gemini yanıt döndürmedi. Lütfen tekrar dene."
+                                text = candidates[0]["content"]["parts"][0]["text"]
+                                if model != GEMINI_MODELS[0]:
+                                    text += f"\n\n> *({model} modeli kullanıldı)*"
+                                return text
+
+                            elif resp.status == 429:
+                                wait = 2 ** (attempt + 1)  # 2s, 4s, 8s
+                                ts = datetime.now().strftime('%H:%M:%S')
+                                print(
+                                    f"[{ts}] ⚠️ GEMINI | 429 Rate Limit ({model}), "
+                                    f"deneme {attempt+1}/3, {wait}s bekleniyor..."
+                                )
+                                await asyncio.sleep(wait)
+                                continue  # Aynı modelde tekrar dene
+
+                            else:
+                                error_text = await resp.text()
+                                print(f"[-] Gemini {model} HTTP {resp.status}: {error_text[:200]}")
+                                return f"❌ Gemini API hatası: HTTP {resp.status}"
+
+                except asyncio.TimeoutError:
+                    print(f"[-] Gemini {model} timeout (deneme {attempt+1}/3)")
+                    if attempt < 2:
+                        await asyncio.sleep(3)
+                    continue
+                except Exception as e:
+                    print(f"[-] Gemini Exception ({model}): {e}")
+                    return f"❌ Beklenmeyen hata: {str(e)}"
+
+            print(f"[-] Gemini {model} tüm denemeler başarısız, sonraki modele geçiliyor...")
+
+        return (
+            "⏳ **Gemini şu an meşgul (rate limit).** "
+            "Tüm modeller denendi ama yanıt alınamadı.\n"
+            "Lütfen **1-2 dakika** bekleyip tekrar mesaj gönder."
+        )
+
+class AISessionControlView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @ui.button(
+        label="Close AI Session",
+        style=discord.ButtonStyle.danger,
+        emoji="🔒",
+        custom_id="close_ai_session_v1"
+    )
+    async def close_ai_session(self, interaction: discord.Interaction, button: ui.Button):
+        session = AI_SESSIONS.get(interaction.channel.id)
+        is_owner = interaction.user == interaction.guild.owner
+        is_session_user = session and session["user_id"] == interaction.user.id
+
+        if not is_owner and not is_session_user:
+            return await interaction.response.send_message(
+                "❌ Bu oturumu yalnızca oturumu açan kullanıcı veya sunucu sahibi kapatabilir.",
+                ephemeral=True
+            )
+
+        await interaction.response.send_message("🔄 **AI oturumu kapatılıyor...**")
+        await asyncio.sleep(2)
+
+        if interaction.channel.id in AI_SESSIONS:
+            del AI_SESSIONS[interaction.channel.id]
+
+        await interaction.channel.delete()
+        print(f"[+ AI] Session closed manually: {interaction.channel.name}")
+
+async def create_ai_session(interaction: discord.Interaction):
+    """Kullanıcıya özel Gemini AI odası oluşturur."""
+    guild = interaction.guild
+
+    for ch_id, sess in list(AI_SESSIONS.items()):
+        if sess["user_id"] == interaction.user.id:
+            ch = guild.get_channel(ch_id)
+            if ch:
+                return await interaction.followup.send(
+                    f"⚠️ Zaten açık bir AI oturumun var: {ch.mention}",
+                    ephemeral=True
+                )
+
+    category = guild.get_channel(TICKET_CATEGORY_ID)
+
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
+        interaction.user: discord.PermissionOverwrite(
+            read_messages=True,
+            send_messages=True,
+            attach_files=True,
+            embed_links=True
+        ),
+        guild.owner: discord.PermissionOverwrite(
+            read_messages=True,
+            send_messages=True,
+            manage_channels=True
+        )
+    }
+
+    u_str = str(interaction.user.id)
+    ch_name = f"ai-{interaction.user.name[:10]}-{u_str[-4:]}"
+
+    channel = await guild.create_text_channel(
+        name=ch_name,
+        category=category,
+        overwrites=overwrites,
+        topic=f"🤖 Hyacinth AI Session | User: {interaction.user} | Auto-closes in 10 min of inactivity"
+    )
+
+    AI_SESSIONS[channel.id] = {
+        "history": [],
+        "last_activity": time.time(),
+        "user_id": interaction.user.id
+    }
+
+    desc = (
+        f"Merhaba {interaction.user.mention}! 👋\n\n"
+        f"**Hyacinth AI** aktif ve sana yardım etmeye hazır.\n\n"
+        f"💡 **Neler yapabilirsin?**\n"
+        f"▫️ Kod yazdırabilir veya debug ettirebilirsin\n"
+        f"▫️ Teknik sorularını sorabilirsin\n"
+        f"▫️ Oyun geliştirme konularında destek alabilirsin\n"
+        f"▫️ Web & yazılım sorunlarını çözebilirsin\n\n"
+        f"⚠️ **Not:** **10 dakika** boyunca mesaj gönderilmezse bu oda otomatik olarak silinir."
+    )
+
+    welcome_embed = discord.Embed(
+        title="🤖 Hyacinth AI — Debug Session",
+        description=desc,
+        color=0x7d5fff,
+        timestamp=datetime.now()
+    )
+    welcome_embed.set_thumbnail(url=interaction.user.display_avatar.url)
+    welcome_embed.set_footer(text="Winter Hyacinth • AI Assistant | Powered by Gemini")
+
+    await channel.send(
+        embed=welcome_embed,
+        view=AISessionControlView()
+    )
+
+    await interaction.followup.send(
+        f"✅ AI oturumun hazır: {channel.mention}",
+        ephemeral=True
+    )
+    print(f"[+ AI] New AI session created for {interaction.user.name} -> {ch_name}")
 
 class CareerLinkView(ui.View):
     def __init__(self):
@@ -91,20 +297,31 @@ class FAQDropdown(ui.Select):
                 description="Get direct help from our staff.",
                 emoji="🎫"
             ),
+            discord.SelectOption(
+                label="Debug with AI",
+                description="Get instant AI-powered coding & debug help.",
+                emoji="🤖"
+            ),
         ]
         super().__init__(
             placeholder="✨ Select a Service...",
             min_values=1,
             max_values=1,
             options=options,
-            custom_id="faq_select_v11"
+            custom_id="faq_select_v12"
         )
 
     async def callback(self, interaction: discord.Interaction):
         selection = self.values[0]
+
         if selection == "Open Support Ticket":
             await interaction.response.defer(ephemeral=True)
             await create_ticket(interaction)
+
+        elif selection == "Debug with AI":
+            await interaction.response.defer(ephemeral=True)
+            await create_ai_session(interaction)
+
         elif selection == "Careers":
             desc = (
                 "We are constantly evolving and looking for new "
@@ -112,7 +329,7 @@ class FAQDropdown(ui.Select):
                 "**How to apply?**\n"
                 "1. Click the button below to open Gmail.\n"
                 "2. Fill in your personal details.\n"
-                "3. Send your application to our official mail.\n\n"
+                "3. Send your application to our official mail.\n"
                 "📧 **Contact:** `winterhyacinth.contact@gmail.com`"
             )
             embed = discord.Embed(
@@ -126,16 +343,9 @@ class FAQDropdown(ui.Select):
                 "▫️ Graphic Design\n"
                 "▫️ Community Management"
             )
-            embed.add_field(
-                name="Available Fields",
-                value=fields,
-                inline=False
-            )
+            embed.add_field(name="Available Fields", value=fields, inline=False)
             icon = interaction.guild.icon.url if interaction.guild.icon else None
-            embed.set_footer(
-                text="Winter Hyacinth • Career Dept",
-                icon_url=icon
-            )
+            embed.set_footer(text="Winter Hyacinth • Career Dept", icon_url=icon)
             await interaction.response.send_message(
                 embed=embed,
                 view=CareerLinkView(),
@@ -176,10 +386,8 @@ class TicketControlView(ui.View):
     async def close(self, interaction: discord.Interaction, button: ui.Button):
         staff_role = interaction.guild.get_role(STAFF_ROLE_ID)
         if staff_role not in interaction.user.roles:
-            return await interaction.response.send_message(
-                "❌ Access denied.",
-                ephemeral=True
-            )
+            return await interaction.response.send_message("❌ Access denied.", ephemeral=True)
+
         await interaction.response.send_message(
             "🔄 **Archiving channel and generating transcript...**"
         )
@@ -195,12 +403,10 @@ class TicketControlView(ui.View):
         async for m in interaction.channel.history(limit=None, oldest_first=True):
             t_str = m.created_at.strftime('%H:%M:%S')
             content += f"[{t_str}] {m.author.display_name}: {m.content}\n"
+
         if log_ch:
             f_bytes = io.BytesIO(content.encode())
-            file = discord.File(
-                f_bytes,
-                filename=f"archive-{interaction.channel.name}.txt"
-            )
+            file = discord.File(f_bytes, filename=f"archive-{interaction.channel.name}.txt")
             desc = (
                 f"**User:** {interaction.channel.name}\n"
                 f"**Closed By:** {interaction.user.mention}"
@@ -212,6 +418,8 @@ class TicketControlView(ui.View):
                 timestamp=datetime.now()
             )
             await log_ch.send(embed=log_embed, file=file)
+            print(f"[+ LOG] Ticket archived: {interaction.channel.name}")
+
         await asyncio.sleep(3)
         await interaction.channel.delete()
 
@@ -220,26 +428,18 @@ async def create_ticket(interaction: discord.Interaction):
     category = guild.get_channel(TICKET_CATEGORY_ID)
     staff = guild.get_role(STAFF_ROLE_ID)
     overwrites = {
-        guild.default_role: discord.PermissionOverwrite(
-            read_messages=False
-        ),
+        guild.default_role: discord.PermissionOverwrite(read_messages=False),
         interaction.user: discord.PermissionOverwrite(
-            read_messages=True,
-            send_messages=True,
-            attach_files=True
+            read_messages=True, send_messages=True, attach_files=True
         ),
         staff: discord.PermissionOverwrite(
-            read_messages=True,
-            send_messages=True,
-            manage_channels=True
+            read_messages=True, send_messages=True, manage_channels=True
         )
     }
     u_str = str(interaction.user.id)
     ch_name = f"ticket-{interaction.user.name[:10]}-{u_str[-4:]}"
     channel = await guild.create_text_channel(
-        name=ch_name,
-        category=category,
-        overwrites=overwrites
+        name=ch_name, category=category, overwrites=overwrites
     )
     desc = (
         f"Hello {interaction.user.mention},\n\n"
@@ -253,23 +453,11 @@ async def create_ticket(interaction: discord.Interaction):
     )
     welcome_embed.set_thumbnail(url=interaction.user.display_avatar.url)
     ts = int(interaction.user.created_at.timestamp())
-    welcome_embed.add_field(
-        name="Account Created",
-        value=f"<t:{ts}:R>",
-        inline=True
-    )
+    welcome_embed.add_field(name="Account Created", value=f"<t:{ts}:R>", inline=True)
     mention_text = f"{staff.mention if staff else ''} {interaction.user.mention}"
-    await channel.send(
-        content=mention_text,
-        embed=welcome_embed,
-        view=TicketControlView()
-    )
-    await interaction.followup.send(
-        f"✅ Ticket created: {channel.mention}",
-        ephemeral=True
-    )
-
-# --- BOT ENGINE ---
+    await channel.send(content=mention_text, embed=welcome_embed, view=TicketControlView())
+    await interaction.followup.send(f"✅ Ticket created: {channel.mention}", ephemeral=True)
+    print(f"[+ TICKET] New ticket: {interaction.user.name} -> {ch_name}")
 
 class WinterBot(commands.Bot):
     def __init__(self):
@@ -285,33 +473,121 @@ class WinterBot(commands.Bot):
         self.add_view(faq_view)
         self.add_view(TicketControlView())
         self.add_view(CareerLinkView())
+        self.add_view(AISessionControlView())
         self.main_loop.start()
+        self.ai_timeout_loop.start()
         print("💎 Winter Hyacinth Bot Loaded | Systems Operational")
 
     @tasks.loop(minutes=2)
     async def main_loop(self):
-        if not self.is_ready(): return
+        if not self.is_ready():
+            return
         await self.check_github()
         await self.check_devlogs()
         await self.update_stats()
 
+    @tasks.loop(seconds=60)
+    async def ai_timeout_loop(self):
+        if not self.is_ready():
+            return
+        now = time.time()
+        to_delete = []
+
+        for ch_id, session in list(AI_SESSIONS.items()):
+            elapsed = now - session["last_activity"]
+            if elapsed >= 600:  # 10 dakika = 600 saniye
+                to_delete.append(ch_id)
+
+        for ch_id in to_delete:
+            guild = self.get_guild(GUILD_ID)
+            if not guild:
+                continue
+            channel = guild.get_channel(ch_id)
+            if channel:
+                try:
+                    timeout_embed = discord.Embed(
+                        title="⏱️ Session Timed Out",
+                        description=(
+                            "Bu AI oturumu **10 dakika** boyunca aktif olmadığı için "
+                            "otomatik olarak kapatılıyor..."
+                        ),
+                        color=0xe74c3c
+                    )
+                    await channel.send(embed=timeout_embed)
+                    await asyncio.sleep(3)
+                    await channel.delete()
+                    print(f"[+ AI] Session auto-deleted (timeout): {channel.name}")
+                except Exception as e:
+                    print(f"[-] AI timeout delete error: {e}")
+
+            if ch_id in AI_SESSIONS:
+                del AI_SESSIONS[ch_id]
+
+    async def on_message(self, message: discord.Message):
+        if message.author.bot:
+            return
+
+        await self.process_commands(message)
+
+        if message.content.startswith(self.command_prefix):
+            return
+
+        if message.channel.id not in AI_SESSIONS:
+            return
+
+        session = AI_SESSIONS[message.channel.id]
+
+        if (message.author.id != session["user_id"]
+                and message.author != message.guild.owner):
+            return
+
+        session["last_activity"] = time.time()
+
+        async with message.channel.typing():
+            response = await call_gemini(session["history"], message.content)
+
+        session["history"].append({
+            "role": "user",
+            "parts": [{"text": message.content}]
+        })
+        session["history"].append({
+            "role": "model",
+            "parts": [{"text": response}]
+        })
+
+        if len(response) <= 2000:
+            await message.channel.send(response)
+        else:
+            chunks = [response[i:i+1990] for i in range(0, len(response), 1990)]
+            for chunk in chunks:
+                await message.channel.send(chunk)
+                await asyncio.sleep(0.3)
+
     async def check_github(self):
         try:
-            async with aiohttp.ClientSession() as session:
+            gh_token = os.getenv('GITHUB_TOKEN')
+            headers = {"User-Agent": "Mozilla/5.0"}
+            if gh_token:
+                headers["Authorization"] = f"Bearer {gh_token}"
+
+            async with aiohttp.ClientSession(headers=headers) as session:
                 for repo in GITHUB_REPOS:
                     api_url = f"https://api.github.com/repos/{repo}/commits"
                     async with session.get(api_url) as resp:
-                        if resp.status != 200: continue
+                        if resp.status != 200:
+                            continue
                         commits_data = await resp.json()
-                        if not commits_data: continue
-                        
+                        if not commits_data:
+                            continue
+
                         sha = commits_data[0]['sha']
                         repo_name = repo.split('/')[-1]
-                        
+
                         if repo not in LAST_DATA["commits"]:
                             LAST_DATA["commits"][repo] = sha
+                            print(f"[⚙️ GITHUB] Initialized: {repo_name}")
                             continue
-                        
+
                         if LAST_DATA["commits"][repo] != sha:
                             detail_url = f"{api_url}/{sha}"
                             async with session.get(detail_url) as d_resp:
@@ -320,29 +596,27 @@ class WinterBot(commands.Bot):
                                     msg = d_data['commit']['message']
                                     author = d_data['commit']['author']['name']
                                     url = d_data['html_url']
-                                    
                                     stats = d_data.get('stats', {})
                                     total_changes = stats.get('total', 0)
                                     additions = stats.get('additions', 0)
                                     deletions = stats.get('deletions', 0)
-                                    
+
                                     files_summary = []
                                     for file in d_data.get('files', [])[:10]:
-                                        filename = file.get('filename')
+                                        fname = file.get('filename')
                                         status = file.get('status')
                                         if status == "added":
-                                            files_summary.append(f"🟢 **Added:** `{filename}`")
+                                            files_summary.append(f"🟢 **Added:** `{fname}`")
                                         elif status == "modified":
-                                            files_summary.append(f"🟡 **Modified:** `{filename}`")
+                                            files_summary.append(f"🟡 **Modified:** `{fname}`")
                                         elif status == "removed":
-                                            files_summary.append(f"🔴 **Removed:** `{filename}`")
-                                    
+                                            files_summary.append(f"🔴 **Removed:** `{fname}`")
+
                                     total_files = len(d_data.get('files', []))
                                     if total_files > 10:
                                         files_summary.append(f"*and {total_files - 10} more files...*")
-                                        
+
                                     file_changes_text = "\n".join(files_summary) if files_summary else "No structural file changes."
-                                    
                                     ch = self.get_channel(ANNOUNCE_CH_ID)
                                     embed = discord.Embed(
                                         title=f"🚀 GitHub Update: {repo_name}",
@@ -351,17 +625,17 @@ class WinterBot(commands.Bot):
                                     )
                                     gh_icon = "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png"
                                     embed.set_author(name=f"Push by {author}", icon_url=gh_icon)
-                                    
                                     embed.description = f"**Commit Message:**\n```text\n{msg}\n```"
-                                    
                                     stats_text = f"🔹 **Total Lines Changed:** `{total_changes}`\n➕ **Additions:** `{additions}`\n➖ **Deletions:** `{deletions}`"
                                     embed.add_field(name="📊 Commit Statistics", value=stats_text, inline=False)
                                     embed.add_field(name="📋 Modified Files", value=file_changes_text, inline=False)
                                     embed.add_field(name="🔗 Code Review", value=f"[Review on GitHub]({url})")
-                                    
+
                                     if ch:
                                         await ch.send(content="🔔 **New Repository Activity Detected!**", embed=embed)
-                            
+                                        ts = datetime.now().strftime('%H:%M:%S')
+                                        print(f"[{ts}] 🚀 GITHUB | {repo_name} pushed by {author}! (+{additions}/-{deletions})")
+
                             LAST_DATA["commits"][repo] = sha
                         await asyncio.sleep(0.5)
         except Exception as e:
@@ -369,11 +643,31 @@ class WinterBot(commands.Bot):
 
     async def check_devlogs(self):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f"{JSON_URL}?t={int(time.time())}") as resp:
+            gh_token = os.getenv('GITHUB_TOKEN')
+            headers = {
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            }
+            if gh_token:
+                headers["Authorization"] = f"Bearer {gh_token}"
+
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(JSON_URL) as resp:
                     if resp.status == 200:
-                        data = json.loads(await resp.text())
-                        if not data: return
+                        gist_data = await resp.json()
+                        files = gist_data.get("files", {})
+                        posts_file = files.get("posts.json", {})
+                        content = posts_file.get("content")
+
+                        if not content:
+                            print("[-] Error: posts.json not found in Gist.")
+                            return
+
+                        data = json.loads(content)
+                        if not data:
+                            return
 
                         sorted_data = sorted(data, key=lambda x: int(x['id']), reverse=True)
                         latest = sorted_data[0]
@@ -382,27 +676,38 @@ class WinterBot(commands.Bot):
 
                         if LAST_DATA["post_id"] is None:
                             LAST_DATA["post_id"] = pid_str
+                            print(f"[⚙️ SITE] Devlog initialized. Watching from ID: {pid_str}")
                             return
 
                         old_id = int(LAST_DATA["post_id"])
 
                         if pid_int > old_id:
                             ch = self.get_channel(ANNOUNCE_CH_ID)
+                            if not ch:
+                                print(f"[-] Channel {ANNOUNCE_CH_ID} not found.")
+                                return
+
                             embed = discord.Embed(
                                 title=f"❄️ NEW DEVLOG: {latest.get('baslik')}",
                                 description=latest.get("ozet"),
                                 color=0x7d5fff
                             )
-                            embed.add_field(name="Link", value=f"🔗 [Open Devlog]({WEB_URL}?id={pid_str})")
+                            embed.add_field(
+                                name="Link",
+                                value=f"🔗 [Open Devlog]({WEB_URL}?id={pid_str})"
+                            )
                             banner = latest.get("banner")
                             if banner:
                                 if banner.startswith("img/"):
                                     banner = f"https://winterhyacinth.gt.tc/{banner}"
                                 embed.set_image(url=banner)
 
-                            if ch: await ch.send(content="🔔 **New Article!** @everyone", embed=embed)
-
-                        LAST_DATA["post_id"] = pid_str
+                            await ch.send(content="🔔 **New Article!** @everyone", embed=embed)
+                            ts = datetime.now().strftime('%H:%M:%S')
+                            print(f"[{ts}] ❄️ DEVLOG | '{latest.get('baslik')}' (ID: {pid_str})")
+                            LAST_DATA["post_id"] = pid_str
+                    else:
+                        print(f"[-] Gist API Error: HTTP {resp.status}")
         except Exception as e:
             print(f"[-] Devlog Error: {e}")
 
@@ -411,8 +716,10 @@ class WinterBot(commands.Bot):
         if guild:
             ch = guild.get_channel(MEMBER_COUNT_CH)
             if ch:
-                try: await ch.edit(name=f"👥 Members: {guild.member_count}")
-                except: pass
+                try:
+                    await ch.edit(name=f"👥 Members: {guild.member_count}")
+                except Exception as e:
+                    print(f"[-] Member count update error: {e}")
             status_activity = discord.Activity(
                 type=discord.ActivityType.watching,
                 name=next(STATUS_LIST)
@@ -420,8 +727,6 @@ class WinterBot(commands.Bot):
             await self.change_presence(activity=status_activity)
 
 bot = WinterBot()
-
-# --- COMMANDS ---
 
 @bot.command(name="setup")
 @commands.has_permissions(administrator=True)
@@ -437,6 +742,7 @@ async def setup(ctx):
     view = ui.View(timeout=None)
     view.add_item(FAQDropdown())
     await ctx.send(embed=embed, view=view)
+    print(f"[+ CMD] Setup executed by {ctx.author.name}")
 
 @bot.command(name="info")
 async def info(ctx):
@@ -450,29 +756,30 @@ async def info(ctx):
         timestamp=datetime.now()
     )
     embed.set_thumbnail(url=bot.user.display_avatar.url)
-
     embed.add_field(name="👥 Members", value=f"`{ctx.guild.member_count}`", inline=True)
     embed.add_field(name="🎭 Roles", value=f"`{len(ctx.guild.roles)}`", inline=True)
     embed.add_field(name="💬 Channels", value=f"`{len(ctx.guild.channels)}`", inline=True)
-
     embed.add_field(name="📡 Latency", value=f"`{round(bot.latency * 1000)}ms`", inline=True)
     embed.add_field(name="⏱️ Uptime", value=f"`{hours}h {minutes}m {seconds}s`", inline=True)
     embed.add_field(name="🛰️ Status", value="🟢 Operational", inline=True)
-
     embed.add_field(name="🚀 Monitored Repos", value=f"`{len(GITHUB_REPOS)} Repos`", inline=True)
+    embed.add_field(name="🤖 AI Sessions", value=f"`{len(AI_SESSIONS)} Active`", inline=True)
     p_id = LAST_DATA['post_id'] if LAST_DATA['post_id'] else 'Syncing...'
     embed.add_field(name="📝 Devlog ID", value=f"`{p_id}`", inline=True)
     embed.add_field(name="💻 Developer", value="`enbest`", inline=True)
-
     icon = ctx.guild.icon.url if ctx.guild.icon else None
-    embed.set_footer(
-        text="Winter Hyacinth • Automated System",
-        icon_url=icon
-    )
+    embed.set_footer(text="Winter Hyacinth • Automated System", icon_url=icon)
     await ctx.send(embed=embed)
+    print(f"[+ CMD] Info executed by {ctx.author.name}")
+
+@bot.event
+async def on_ready():
+    print(f"🤖 Bot as {bot.user.name} is fully online and monitoring...")
 
 if __name__ == "__main__":
     if not TOKEN:
-        print("❌ ERROR: DISCORD_BOT_TOKEN not found in environment!")
+        print("❌ ERROR: DISCORD_BOT_TOKEN not found!")
     else:
+        if not GEMINI_API_KEY:
+            print("⚠️ WARNING: GEMINI_API_KEY not found! AI sessions will not work.")
         bot.run(TOKEN)
