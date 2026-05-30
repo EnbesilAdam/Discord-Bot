@@ -10,11 +10,17 @@ Winter Hyacinth is a sleek, automated server assistant designed to bridge the ga
 
 ## 🚀 Key Features
 
-* **📦 Smart GitHub Tracker:** Posts instant updates when you push code. Tracks changes down to the exact line counts (Additions / Deletions) and displays file statuses.
-* **✍️ Automated Devlog Sync:** Automatically polls your custom JSON feed and formats beautiful community announcements whenever you publish a new article.
-* **🎫 Dynamic Support Tickets:** Users can open secure, private ticket channels with a single click. Includes automated chat logs and archiving for your staff.
-* **💼 Seamless Career Intake:** Features a one-click button that automatically drafts and formats a job application email for candidates using Gmail.
-* **📊 Live Dashboard (!info):** Monitors server statistics, dynamic custom statuses, system uptime, and API latency in real-time.
+* **🤖 Hyacinth AI Debugger:** * Integrated with Gemini API to provide private, on-demand debugging channels. Features automatic 10-minute inactivity timeouts, concurrency queuing, and multi-model fallback routines with exponential backoff handling.
+
+* **📦 Smart GitHub Tracker:** * Tracks changes dynamically across multiple repositories. Posts instant updates down to file statuses (Added, Modified, Removed) and exact line counts (Additions / Deletions).
+
+* **✍️ Automated Devlog Sync:** * Automatically polls an upstream Gist JSON feed and formats beautiful community announcements whenever you publish a new article.
+
+* **🎫 Dynamic Support Tickets:** * Users can open secure, private ticket channels. Features a staff-claiming system, automated chat logs, and text transcript archiving for your staff.
+
+* **💼 Seamless Career Intake:** * Features a unified dropdown menu option that automatically drafts and formats a structured job application email for candidates using Gmail.
+
+* **📊 Live Dashboard (!info):** * Monitors server statistics, live uptime matrix, websocket latency, tracked repositories, and active AI sessions in real-time.
 
 ---
 
