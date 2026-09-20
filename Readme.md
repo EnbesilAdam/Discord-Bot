@@ -51,7 +51,7 @@ GITHUB_TOKEN=your_github_personal_access_token_optional
 
 3. Botu Başlatın
 
-python3 botyeni.py
+python3 bot.py
 
 -|[###] Slash (/) Komut Rehberi [###]|-
 
